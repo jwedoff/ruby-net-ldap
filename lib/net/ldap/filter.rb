@@ -23,11 +23,11 @@
 class Net::LDAP::Filter
   ##
   # Known filter types.
-  FilterTypes = [ :ne, :eq, :ge, :le, :and, :or, :not, :ex, :bineq ]
+  FilterTypes = [:ne, :eq, :ge, :le, :and, :or, :not, :ex, :bineq]
 
   def initialize(op, left, right) #:nodoc:
     unless FilterTypes.include?(op)
-      raise Net::LDAP::LdapError, "Invalid or unsupported operator #{op.inspect} in LDAP Filter."
+      raise Net::LDAP::OperatorError, "Invalid or unsupported operator #{op.inspect} in LDAP Filter."
     end
     @op = op
     @left = left
@@ -287,10 +287,10 @@ class Net::LDAP::Filter
       when 0xa4 # context-specific constructed 4, "substring"
         str = ""
         final = false
-        ber.last.each { |b|
+        ber.last.each do |b|
           case b.ber_identifier
           when 0x80 # context-specific primitive 0, SubstringFilter "initial"
-            raise Net::LDAP::LdapError, "Unrecognized substring filter; bad initial value." if str.length > 0
+            raise Net::LDAP::SubstringFilterError, "Unrecognized substring filter; bad initial value." if str.length > 0
             str += escape(b)
           when 0x81 # context-specific primitive 0, SubstringFilter "any"
             str += "*#{escape(b)}"
@@ -298,7 +298,7 @@ class Net::LDAP::Filter
             str += "*#{escape(b)}"
             final = true
           end
-        }
+        end
         str += "*" unless final
         eq(ber.first.to_s, str)
       when 0xa5 # context-specific constructed 5, "greaterOrEqual"
@@ -309,7 +309,7 @@ class Net::LDAP::Filter
         # call to_s to get rid of the BER-identifiedness of the incoming string.
         present?(ber.to_s)
       when 0xa9 # context-specific constructed 9, "extensible comparison"
-        raise Net::LDAP::LdapError, "Invalid extensible search filter, should be at least two elements" if ber.size<2
+        raise Net::LDAP::SearchFilterError, "Invalid extensible search filter, should be at least two elements" if ber.size < 2
 
         # Reassembles the extensible filter parts
         # (["sn", "2.4.6.8.10", "Barbara Jones", '1'])
@@ -330,7 +330,7 @@ class Net::LDAP::Filter
 
         ex(attribute, value)
       else
-        raise Net::LDAP::LdapError, "Invalid BER tag-value (#{ber.ber_identifier}) in search filter."
+        raise Net::LDAP::BERInvalidError, "Invalid BER tag-value (#{ber.ber_identifier}) in search filter."
       end
     end
 
@@ -357,7 +357,7 @@ class Net::LDAP::Filter
       when 0xa3 # equalityMatch. context-specific constructed 3.
         eq(obj[0], obj[1])
       else
-        raise Net::LDAP::LdapError, "Unknown LDAP search-filter type: #{obj.ber_identifier}"
+        raise Net::LDAP::SearchFilterTypeUnknownError, "Unknown LDAP search-filter type: #{obj.ber_identifier}"
       end
     end
   end
@@ -532,7 +532,7 @@ class Net::LDAP::Filter
       seq = []
 
       unless @left =~ /^([-;\w]*)(:dn)?(:(\w+|[.\w]+))?$/
-        raise Net::LDAP::LdapError, "Bad attribute #{@left}"
+        raise Net::LDAP::BadAttributeError, "Bad attribute #{@left}"
       end
       type, dn, rule = $1, $2, $4
 
@@ -550,10 +550,10 @@ class Net::LDAP::Filter
       [self.class.eq(@left, @right).to_ber].to_ber_contextspecific(2)
     when :and
       ary = [@left.coalesce(:and), @right.coalesce(:and)].flatten
-      ary.map {|a| a.to_ber}.to_ber_contextspecific(0)
+      ary.map(&:to_ber).to_ber_contextspecific(0)
     when :or
       ary = [@left.coalesce(:or), @right.coalesce(:or)].flatten
-      ary.map {|a| a.to_ber}.to_ber_contextspecific(1)
+      ary.map(&:to_ber).to_ber_contextspecific(1)
     when :not
       [@left.to_ber].to_ber_contextspecific(2)
     end
@@ -639,15 +639,21 @@ class Net::LDAP::Filter
         l = entry[@left] and l = Array(l) and l.index(@right)
       end
     else
-      raise Net::LDAP::LdapError, "Unknown filter type in match: #{@op}"
+      raise Net::LDAP::FilterTypeUnknownError, "Unknown filter type in match: #{@op}"
     end
   end
 
   ##
   # Converts escaped characters (e.g., "\\28") to unescaped characters
-  # ("(").
+  # @note slawson20170317: Don't attempt to unescape 16 byte binary data which we assume are objectGUIDs
+  # The binary form of 5936AE79-664F-44EA-BCCB-5C39399514C6 triggers a BINARY -> UTF-8 conversion error
   def unescape(right)
-    right.gsub(/\\([a-fA-F\d]{2})/) { [$1.hex].pack("U") }
+    right = right.to_s
+    if right.length == 16 && right.encoding == Encoding::BINARY
+      right
+    else
+      right.to_s.gsub(/\\([a-fA-F\d]{2})/) { [$1.hex].pack("U") }
+    end
   end
   private :unescape
 
@@ -672,7 +678,7 @@ class Net::LDAP::Filter
     def initialize(str)
       require 'strscan' # Don't load strscan until we need it.
       @filter = parse(StringScanner.new(str))
-      raise Net::LDAP::LdapError, "Invalid filter syntax." unless @filter
+      raise Net::LDAP::FilterSyntaxInvalidError, "Invalid filter syntax." unless @filter
     end
 
     ##
@@ -753,7 +759,7 @@ class Net::LDAP::Filter
         scanner.scan(/\s*/)
         if op = scanner.scan(/<=|>=|!=|:=|=/)
           scanner.scan(/\s*/)
-          if value = scanner.scan(/(?:[-\[\]{}\w*.+:@=,#\$%&!'^~\s\xC3\x80-\xCA\xAF]|[^\x00-\x7F]|\\[a-fA-F\d]{2})+/u)
+          if value = scanner.scan(/(?:[-\[\]{}\w*.+\/:@=,#\$%&!'^~\s\xC3\x80-\xCA\xAF]|[^\x00-\x7F]|\\[a-fA-F\d]{2})+/u)
             # 20100313 AZ: Assumes that "(uid=george*)" is the same as
             # "(uid=george* )". The standard doesn't specify, but I can find
             # no examples that suggest otherwise.

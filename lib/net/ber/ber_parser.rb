@@ -14,7 +14,7 @@ module Net::BER::BERParser
   }
   constructed = {
     16 => :array,
-    17 => :array
+    17 => :array,
   }
   universal = { :primitive => primitive, :constructed => constructed }
 
@@ -44,9 +44,18 @@ module Net::BER::BERParser
       s.ber_identifier = id
       s
     elsif object_type == :integer
-      j = 0
-      data.each_byte { |b| j = (j << 8) + b }
-      j
+      neg = !(data.unpack("C").first & 0x80).zero?
+      int = 0
+
+      data.each_byte do |b|
+        int = (int << 8) + (neg ? 255 - b : b)
+      end
+
+      if neg
+        (int + 1) * -1
+      else
+        int
+      end
     elsif object_type == :oid
       # See X.690 pgh 8.19 for an explanation of this algorithm.
       # This is potentially not good enough. We may need a
@@ -165,10 +174,10 @@ module Net::BER::BERParser
     yield id, content_length if block_given?
 
     if -1 == content_length
-      raise Net::BER::BerError, "Indeterminite BER content length not implemented."
-    else
-      data = read_ber_nonblock(content_length)
+      raise Net::BER::BerError,
+            "Indeterminite BER content length not implemented."
     end
+    data = read_ber_nonblock(content_length)
 
     parse_ber_object(syntax, id, data)
   end
@@ -198,14 +207,12 @@ module Net::BER::BERParser
 
   # Internal: Read `len` bytes, respecting timeout.
   def read_ber_nonblock(len)
-    begin
+    read_nonblock(len)
+  rescue IO::WaitReadable
+    if IO.select([self], nil, nil, read_ber_timeout)
       read_nonblock(len)
-    rescue IO::WaitReadable
-      if IO.select([self], nil, nil, read_ber_timeout)
-        read_nonblock(len)
-      else
-        raise Net::LDAP::LdapError, "Timed out reading from the socket"
-      end
+    else
+      raise Net::LDAP::LdapError, "Timed out reading from the socket"
     end
   end
   private :read_ber_nonblock

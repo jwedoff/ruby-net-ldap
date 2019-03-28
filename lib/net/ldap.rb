@@ -26,6 +26,13 @@ require 'net/ldap/entry'
 require 'net/ldap/instrumentation'
 require 'net/ldap/connection'
 require 'net/ldap/version'
+require 'net/ldap/error'
+require 'net/ldap/auth_adapter'
+require 'net/ldap/auth_adapter/simple'
+require 'net/ldap/auth_adapter/sasl'
+
+Net::LDAP::AuthAdapter.register([:simple, :anon, :anonymous], Net::LDAP::AuthAdapter::Simple)
+Net::LDAP::AuthAdapter.register(:sasl, Net::LDAP::AuthAdapter::Sasl)
 
 # == Quick-start for the Impatient
 # === Quick Example of a user-authentication against an LDAP directory:
@@ -72,6 +79,14 @@ require 'net/ldap/version'
 #
 #  p ldap.get_operation_result
 #
+# === Setting connect timeout
+#
+# By default, Net::LDAP uses TCP sockets with a connection timeout of 5 seconds.
+#
+# This value can be tweaked passing the :connect_timeout parameter.
+# i.e.
+#  ldap = Net::LDAP.new ...,
+#                       :connect_timeout => 3
 #
 # == A Brief Introduction to LDAP
 #
@@ -246,19 +261,17 @@ require 'net/ldap/version'
 class Net::LDAP
   include Net::LDAP::Instrumentation
 
-  class LdapError < StandardError; end
-
   SearchScope_BaseObject = 0
   SearchScope_SingleLevel = 1
   SearchScope_WholeSubtree = 2
-  SearchScopes = [ SearchScope_BaseObject, SearchScope_SingleLevel,
-    SearchScope_WholeSubtree ]
+  SearchScopes = [SearchScope_BaseObject, SearchScope_SingleLevel,
+    SearchScope_WholeSubtree]
 
   DerefAliases_Never = 0
   DerefAliases_Search = 1
   DerefAliases_Find = 2
   DerefAliases_Always = 3
-  DerefAliasesArray = [ DerefAliases_Never, DerefAliases_Search, DerefAliases_Find, DerefAliases_Always ]
+  DerefAliasesArray = [DerefAliases_Never, DerefAliases_Search, DerefAliases_Find, DerefAliases_Always]
 
   primitive = { 2 => :null } # UnbindRequest body
   constructed = {
@@ -310,7 +323,14 @@ class Net::LDAP
     :constructed => constructed,
   }
 
+  universal = {
+    constructed: {
+      107 => :array, #ExtendedResponse (PasswdModifyResponseValue)
+    },
+  }
+
   AsnSyntax = Net::BER.compile_syntax(:application => application,
+                                      :universal => universal,
                                       :context_specific => context_specific)
 
   DefaultHost = "127.0.0.1"
@@ -319,7 +339,8 @@ class Net::LDAP
   DefaultTreebase = "dc=com"
   DefaultForceNoPage = false
 
-  StartTlsOid = "1.3.6.1.4.1.1466.20037"
+  StartTlsOid = '1.3.6.1.4.1.1466.20037'
+  PasswdModifyOid = '1.3.6.1.4.1.4203.1.11.1'
 
   # https://tools.ietf.org/html/rfc4511#section-4.1.9
   # https://tools.ietf.org/html/rfc4511#appendix-A
@@ -368,14 +389,14 @@ class Net::LDAP
     ResultCodeCompareFalse,
     ResultCodeCompareTrue,
     ResultCodeReferral,
-    ResultCodeSaslBindInProgress
+    ResultCodeSaslBindInProgress,
   ]
 
   # nonstandard list of "successful" result codes for searches
   ResultCodesSearchSuccess = [
     ResultCodeSuccess,
     ResultCodeTimeLimitExceeded,
-    ResultCodeSizeLimitExceeded
+    ResultCodeSizeLimitExceeded,
   ]
 
   # map of result code to human message
@@ -417,7 +438,7 @@ class Net::LDAP
     ResultCodeEntryAlreadyExists           => "Entry Already Exists",
     ResultCodeObjectClassModsProhibited    => "ObjectClass Modifications Prohibited",
     ResultCodeAffectsMultipleDSAs          => "Affects Multiple DSAs",
-    ResultCodeOther                        => "Other"
+    ResultCodeOther                        => "Other",
   }
 
   module LDAPControls
@@ -433,6 +454,7 @@ class Net::LDAP
 
   attr_accessor :host
   attr_accessor :port
+  attr_accessor :hosts
   attr_accessor :base
 
   # Instantiate an object of type Net::LDAP to perform directory operations.
@@ -441,6 +463,8 @@ class Net::LDAP
   # described below. The following arguments are supported:
   # * :host => the LDAP server's IP-address (default 127.0.0.1)
   # * :port => the LDAP server's TCP port (default 389)
+  # * :hosts => an enumerable of pairs of hosts and corresponding ports with
+  #   which to attempt opening connections (default [[host, port]])
   # * :auth => a Hash containing authorization parameters. Currently
   #   supported values include: {:method => :anonymous} and {:method =>
   #   :simple, :username => your_user_name, :password => your_password }
@@ -452,28 +476,83 @@ class Net::LDAP
   #   specify a treebase. If you give a treebase value in any particular
   #   call to #search, that value will override any treebase value you give
   #   here.
-  # * :encryption => specifies the encryption to be used in communicating
-  #   with the LDAP server. The value is either a Hash containing additional
-  #   parameters, or the Symbol :simple_tls, which is equivalent to
-  #   specifying the Hash {:method => :simple_tls}. There is a fairly large
-  #   range of potential values that may be given for this parameter. See
-  #   #encryption for details.
   # * :force_no_page => Set to true to prevent paged results even if your
   #   server says it supports them. This is a fix for MS Active Directory
   # * :instrumentation_service => An object responsible for instrumenting
   #   operations, compatible with ActiveSupport::Notifications' public API.
+  # * :encryption => specifies the encryption to be used in communicating
+  #   with the LDAP server. The value must be a Hash containing additional
+  #   parameters, which consists of two keys:
+  #     method: - :simple_tls or :start_tls
+  #     tls_options: - Hash of options for that method
+  #   The :simple_tls encryption method encrypts <i>all</i> communications
+  #   with the LDAP server. It completely establishes SSL/TLS encryption with
+  #   the LDAP server before any LDAP-protocol data is exchanged. There is no
+  #   plaintext negotiation and no special encryption-request controls are
+  #   sent to the server. <i>The :simple_tls option is the simplest, easiest
+  #   way to encrypt communications between Net::LDAP and LDAP servers.</i>
+  #   If you get communications or protocol errors when using this option,
+  #   check with your LDAP server administrator. Pay particular attention
+  #   to the TCP port you are connecting to. It's impossible for an LDAP
+  #   server to support plaintext LDAP communications and <i>simple TLS</i>
+  #   connections on the same port. The standard TCP port for unencrypted
+  #   LDAP connections is 389, but the standard port for simple-TLS
+  #   encrypted connections is 636. Be sure you are using the correct port.
+  #   The :start_tls like the :simple_tls encryption method also encrypts all
+  #   communcations with the LDAP server. With the exception that it operates
+  #   over the standard TCP port.
+  #
+  #   To validate the LDAP server's certificate (a security must if you're
+  #   talking over the public internet), you need to set :tls_options
+  #   something like this...
+  #
+  #   Net::LDAP.new(
+  #     # ... set host, bind dn, etc ...
+  #     encryption: {
+  #       method: :simple_tls,
+  #       tls_options: OpenSSL::SSL::SSLContext::DEFAULT_PARAMS,
+  #     }
+  #   )
+  #
+  #   The above will use the operating system-provided store of CA
+  #   certificates to validate your LDAP server's cert.
+  #   If cert validation fails, it'll happen during the #bind
+  #   whenever you first try to open a connection to the server.
+  #   Those methods will throw Net::LDAP::ConnectionError with
+  #   a message about certificate verify failing. If your
+  #   LDAP server's certificate is signed by DigiCert, Comodo, etc.,
+  #   you're probably good. If you've got a self-signed cert but it's
+  #   been added to the host's OS-maintained CA store (e.g. on Debian
+  #   add foobar.crt to /usr/local/share/ca-certificates/ and run
+  #   `update-ca-certificates`), then the cert should pass validation.
+  #   To ignore the OS's CA store, put your CA in a PEM-encoded file and...
+  #
+  #   encryption: {
+  #     method:      :simple_tls,
+  #     tls_options: { ca_file:     '/path/to/my-little-ca.pem',
+  #                    ssl_version: 'TLSv1_1' },
+  #   }
+  #
+  #   As you might guess, the above example also fails the connection
+  #   if the client can't negotiate TLS v1.1.
+  #   tls_options is ultimately passed to OpenSSL::SSL::SSLContext#set_params
+  #   For more details, see
+  #    http://ruby-doc.org/stdlib-2.0.0/libdoc/openssl/rdoc/OpenSSL/SSL/SSLContext.html
   #
   # Instantiating a Net::LDAP object does <i>not</i> result in network
   # traffic to the LDAP server. It simply stores the connection and binding
-  # parameters in the object.
+  # parameters in the object. That's why Net::LDAP.new doesn't throw
+  # cert validation errors itself; #bind does instead.
   def initialize(args = {})
     @host = args[:host] || DefaultHost
     @port = args[:port] || DefaultPort
+    @hosts = args[:hosts]
     @verbose = false # Make this configurable with a switch on the class.
     @auth = args[:auth] || DefaultAuth
     @base = args[:base] || DefaultTreebase
     @force_no_page = args[:force_no_page] || DefaultForceNoPage
-    encryption args[:encryption] # may be nil
+    @encryption = normalize_encryption(args[:encryption]) # may be nil
+    @connect_timeout = args[:connect_timeout]
 
     if pr = @auth[:password] and pr.respond_to?(:call)
       @auth[:password] = pr.call
@@ -524,7 +603,7 @@ class Net::LDAP
     @auth = {
       :method => :simple,
       :username => username,
-      :password => password
+      :password => password,
     }
   end
   alias_method :auth, :authenticate
@@ -537,54 +616,12 @@ class Net::LDAP
   # additional capabilities are added, more configuration values will be
   # added here.
   #
-  # The :simple_tls encryption method encrypts <i>all</i> communications
-  # with the LDAP server. It completely establishes SSL/TLS encryption with
-  # the LDAP server before any LDAP-protocol data is exchanged. There is no
-  # plaintext negotiation and no special encryption-request controls are
-  # sent to the server. <i>The :simple_tls option is the simplest, easiest
-  # way to encrypt communications between Net::LDAP and LDAP servers.</i>
-  # It's intended for cases where you have an implicit level of trust in the
-  # authenticity of the LDAP server. No validation of the LDAP server's SSL
-  # certificate is performed. This means that :simple_tls will not produce
-  # errors if the LDAP server's encryption certificate is not signed by a
-  # well-known Certification Authority. If you get communications or
-  # protocol errors when using this option, check with your LDAP server
-  # administrator. Pay particular attention to the TCP port you are
-  # connecting to. It's impossible for an LDAP server to support plaintext
-  # LDAP communications and <i>simple TLS</i> connections on the same port.
-  # The standard TCP port for unencrypted LDAP connections is 389, but the
-  # standard port for simple-TLS encrypted connections is 636. Be sure you
-  # are using the correct port.
+  # This method is deprecated.
   #
-  # The :start_tls like the :simple_tls encryption method also encrypts all
-  # communcations with the LDAP server. With the exception that it operates
-  # over the standard TCP port.
-  #
-  # In order to verify certificates and enable other TLS options, the
-  # :tls_options hash can be passed alongside :simple_tls or :start_tls.
-  # This hash contains any options that can be passed to
-  # OpenSSL::SSL::SSLContext#set_params(). The most common options passed
-  # should be OpenSSL::SSL::SSLContext::DEFAULT_PARAMS, or the :ca_file option,
-  # which contains a path to a Certificate Authority file (PEM-encoded).
-  #
-  # Example for a default setup without custom settings:
-  #   {
-  #     :method => :simple_tls,
-  #     :tls_options => OpenSSL::SSL::SSLContext::DEFAULT_PARAMS
-  #   }
-  #
-  # Example for specifying a CA-File and only allowing TLSv1.1 connections:
-  #
-  #   {
-  #     :method => :start_tls,
-  #     :tls_options => { :ca_file => "/etc/cafile.pem", :ssl_version => "TLSv1_1" }
-  #   }
   def encryption(args)
-    case args
-    when :simple_tls, :start_tls
-      args = { :method => args, :tls_options => {} }
-    end
-    @encryption = args
+    warn "Deprecation warning: please give :encryption option as a Hash to Net::LDAP.new"
+    return if args.nil?
+    @encryption = normalize_encryption(args)
   end
 
   # #open takes the same parameters as #new. #open makes a network
@@ -628,8 +665,11 @@ class Net::LDAP
   #++
   def get_operation_result
     result = @result
-    result = result.result if result.is_a?(Net::LDAP::PDU)
     os = OpenStruct.new
+    if result.is_a?(Net::LDAP::PDU)
+      os.extended_response = result.extended_response
+      result = result.result
+    end
     if result.is_a?(Hash)
       # We might get a hash of LDAP response codes instead of a simple
       # numeric code.
@@ -666,16 +706,11 @@ class Net::LDAP
     # anything with the bind results. We then pass self to the caller's
     # block, where he will execute his LDAP operations. Of course they will
     # all generate auth failures if the bind was unsuccessful.
-    raise Net::LDAP::LdapError, "Open already in progress" if @open_connection
+    raise Net::LDAP::AlreadyOpenedError, "Open already in progress" if @open_connection
 
     instrument "open.net_ldap" do |payload|
       begin
-        @open_connection =
-          Net::LDAP::Connection.new \
-            :host                    => @host,
-            :port                    => @port,
-            :encryption              => @encryption,
-            :instrumentation_service => @instrumentation_service
+        @open_connection = new_connection
         payload[:connection] = @open_connection
         payload[:bind]       = @open_connection.bind(@auth)
         yield self
@@ -745,26 +780,10 @@ class Net::LDAP
     result_set = return_result_set ? [] : nil
 
     instrument "search.net_ldap", args do |payload|
-      if @open_connection
-        @result = @open_connection.search(args) { |entry|
+      @result = use_connection(args) do |conn|
+        conn.search(args) do |entry|
           result_set << entry if result_set
           yield entry if block_given?
-        }
-      else
-        begin
-          conn = Net::LDAP::Connection.new \
-            :host                    => @host,
-            :port                    => @port,
-            :encryption              => @encryption,
-            :instrumentation_service => @instrumentation_service
-          if (@result = conn.bind(args[:auth] || @auth)).result_code == Net::LDAP::ResultCodeSuccess
-            @result = conn.search(args) { |entry|
-              result_set << entry if result_set
-              yield entry if block_given?
-            }
-          end
-        ensure
-          conn.close if conn
         end
       end
 
@@ -844,11 +863,7 @@ class Net::LDAP
         payload[:bind]       = @result = @open_connection.bind(auth)
       else
         begin
-          conn = Connection.new \
-            :host                    => @host,
-            :port                    => @port,
-            :encryption              => @encryption,
-            :instrumentation_service => @instrumentation_service
+          conn = new_connection
           payload[:connection] = conn
           payload[:bind]       = @result = conn.bind(auth)
         ensure
@@ -908,7 +923,7 @@ class Net::LDAP
   #  end
   def bind_as(args = {})
     result = false
-    open { |me|
+    open do |me|
       rs = search args
       if rs and rs.first and dn = rs.first.dn
         password = args[:password]
@@ -916,7 +931,7 @@ class Net::LDAP
         result = rs if bind(:method => :simple, :username => dn,
                             :password => password)
       end
-    }
+    end
     result
   end
 
@@ -946,22 +961,8 @@ class Net::LDAP
   #  end
   def add(args)
     instrument "add.net_ldap", args do |payload|
-      if @open_connection
-        @result = @open_connection.add(args)
-      else
-        @result = 0
-        begin
-          conn = Connection.new \
-            :host                    => @host,
-            :port                    => @port,
-            :encryption              => @encryption,
-            :instrumentation_service => @instrumentation_service
-          if (@result = conn.bind(args[:auth] || @auth)).result_code == Net::LDAP::ResultCodeSuccess
-            @result = conn.add(args)
-          end
-        ensure
-          conn.close if conn
-        end
+      @result = use_connection(args) do |conn|
+        conn.add(args)
       end
       @result.success?
     end
@@ -1050,24 +1051,47 @@ class Net::LDAP
   # does _not_ imply transactional atomicity, which LDAP does not provide.
   def modify(args)
     instrument "modify.net_ldap", args do |payload|
-      if @open_connection
-        @result = @open_connection.modify(args)
-      else
-        @result = 0
-        begin
-          conn = Connection.new \
-            :host                    => @host,
-            :port                    => @port,
-            :encryption              => @encryption,
-            :instrumentation_service => @instrumentation_service
-          if (@result = conn.bind(args[:auth] || @auth)).result_code == Net::LDAP::ResultCodeSuccess
-            @result = conn.modify(args)
-          end
-        ensure
-          conn.close if conn
-        end
+      @result = use_connection(args) do |conn|
+        conn.modify(args)
       end
+      @result.success?
+    end
+  end
 
+  # Password Modify
+  #
+  # Change existing password:
+  #
+  #  dn = 'uid=modify-password-user1,ou=People,dc=rubyldap,dc=com'
+  #  auth = {
+  #    method: :simple,
+  #    username: dn,
+  #    password: 'passworD1'
+  #  }
+  #  ldap.password_modify(dn: dn,
+  #                       auth: auth,
+  #                       old_password: 'passworD1',
+  #                       new_password: 'passworD2')
+  #
+  # Or get the LDAP server to generate a password for you:
+  #
+  #  dn = 'uid=modify-password-user1,ou=People,dc=rubyldap,dc=com'
+  #  auth = {
+  #    method: :simple,
+  #    username: dn,
+  #    password: 'passworD1'
+  #  }
+  #  ldap.password_modify(dn: dn,
+  #                       auth: auth,
+  #                       old_password: 'passworD1')
+  #
+  #  ldap.get_operation_result.extended_response[0][0] #=> 'VtcgGf/G'
+  #
+  def password_modify(args)
+    instrument "modify_password.net_ldap", args do |payload|
+      @result = use_connection(args) do |conn|
+        conn.password_modify(args)
+      end
       @result.success?
     end
   end
@@ -1127,22 +1151,8 @@ class Net::LDAP
   # _Documentation_ _stub_
   def rename(args)
     instrument "rename.net_ldap", args do |payload|
-      if @open_connection
-        @result = @open_connection.rename(args)
-      else
-        @result = 0
-        begin
-          conn = Connection.new \
-            :host                    => @host,
-            :port                    => @port,
-            :encryption              => @encryption,
-            :instrumentation_service => @instrumentation_service
-          if (@result = conn.bind(args[:auth] || @auth)).result_code == Net::LDAP::ResultCodeSuccess
-            @result = conn.rename(args)
-          end
-        ensure
-          conn.close if conn
-        end
+      @result = use_connection(args) do |conn|
+        conn.rename(args)
       end
       @result.success?
     end
@@ -1160,22 +1170,8 @@ class Net::LDAP
   #  ldap.delete :dn => dn
   def delete(args)
     instrument "delete.net_ldap", args do |payload|
-      if @open_connection
-        @result = @open_connection.delete(args)
-      else
-        @result = 0
-        begin
-          conn = Connection.new \
-            :host                    => @host,
-            :port                    => @port,
-            :encryption              => @encryption,
-            :instrumentation_service => @instrumentation_service
-          if (@result = conn.bind(args[:auth] || @auth)).result_code == Net::LDAP::ResultCodeSuccess
-            @result = conn.delete(args)
-          end
-        ensure
-          conn.close
-        end
+      @result = use_connection(args) do |conn|
+        conn.delete(args)
       end
       @result.success?
     end
@@ -1218,7 +1214,7 @@ class Net::LDAP
                   :supportedExtension,
                   :supportedFeatures,
                   :supportedLdapVersion,
-                  :supportedSASLMechanisms
+                  :supportedSASLMechanisms,
                 ])
     (rs and rs.first) or Net::LDAP::Entry.new
   end
@@ -1277,4 +1273,71 @@ class Net::LDAP
     @server_caps ||= search_root_dse
     @server_caps[:supportedcontrol].include?(Net::LDAP::LDAPControls::PAGED_RESULTS)
   end
+
+  # Mask auth password
+  def inspect
+    inspected = super
+    inspected.gsub! @auth[:password], "*******" if @auth[:password]
+    inspected
+  end
+
+  # Internal: Set @open_connection for testing
+  def connection=(connection)
+    @open_connection = connection
+  end
+
+  private
+
+  # Yields an open connection if there is one, otherwise establishes a new
+  # connection, binds, and yields it. If binding fails, it will return the
+  # result from that, and :use_connection: will not yield at all. If not
+  # the return value is whatever is returned from the block.
+  def use_connection(args)
+    if @open_connection
+      yield @open_connection
+    else
+      begin
+        conn = new_connection
+        result = conn.bind(args[:auth] || @auth)
+        return result unless result.result_code == Net::LDAP::ResultCodeSuccess
+        yield conn
+      ensure
+        conn.close if conn
+      end
+    end
+  end
+
+  # Establish a new connection to the LDAP server
+  def new_connection
+    connection = Net::LDAP::Connection.new \
+      :host                    => @host,
+      :port                    => @port,
+      :hosts                   => @hosts,
+      :encryption              => @encryption,
+      :instrumentation_service => @instrumentation_service,
+      :connect_timeout         => @connect_timeout
+
+    # Force connect to see if there's a connection error
+    connection.socket
+    connection
+  rescue Errno::ECONNREFUSED, Errno::ETIMEDOUT, Net::LDAP::ConnectionRefusedError => e
+    @result = {
+      :resultCode   => 52,
+      :errorMessage => ResultStrings[ResultCodeUnavailable],
+    }
+    raise e
+  end
+
+  # Normalize encryption parameter the constructor accepts, expands a few
+  # convenience symbols into recognizable hashes
+  def normalize_encryption(args)
+    return if args.nil?
+    return args if args.is_a? Hash
+
+    case method = args.to_sym
+    when :simple_tls, :start_tls
+      { :method => method, :tls_options => {} }
+    end
+  end
+
 end # class LDAP
