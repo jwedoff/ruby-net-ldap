@@ -220,13 +220,13 @@ module Net::BER::BERParser
 
   def read_select!
     return if IO.select([self], nil, nil, ber_io_timeout)
-    raise Net::LDAP::LdapError, "Timed out reading from the socket"
+    raise Errno::ETIMEDOUT, "Timed out reading from the socket"
   end
   private :read_select!
 
   def write_select!
     return if IO.select(nil, [self], nil, ber_io_timeout)
-    raise Net::LDAP::LdapError, "Timed out reading from the socket"
+    raise Errno::ETIMEDOUT, "Timed out reading from the socket"
   end
   private :write_select!
 
