@@ -94,7 +94,7 @@ class TestLDAPConnection < Test::Unit::TestCase
 
   def test_connection_timeout
     connection = Net::LDAP::Connection.new(:host => "fail.Errno::ETIMEDOUT", :port => 636, :socket_class => FakeTCPSocket)
-    stderr = capture_stderr do
+    capture_stderr do
       assert_raise Net::LDAP::Error do
         connection.socket
       end
@@ -123,7 +123,7 @@ class TestLDAPConnection < Test::Unit::TestCase
   end
 
   def test_modify_ops_replace
-    args = { :operations =>[[:replace, "mail", "testuser@example.com"]] }
+    args = { :operations => [[:replace, "mail", "testuser@example.com"]] }
     result = Net::LDAP::Connection.modify_ops(args[:operations])
     expected = ["0#\n\x01\x020\x1E\x04\x04mail1\x16\x04\x14testuser@example.com"]
     assert_equal(expected, result)
@@ -193,9 +193,9 @@ class TestLDAPConnectionSocketReads < Test::Unit::TestCase
     result2 = make_message(2)
 
     mock = flexmock("socket")
-    mock.should_receive(:read_ber).
-      and_return(result1).
-      and_return(result2)
+    mock.should_receive(:read_ber)
+        .and_return(result1)
+        .and_return(result2)
     conn = Net::LDAP::Connection.new(:socket => mock)
 
     assert result = conn.queued_read(2)
@@ -208,9 +208,9 @@ class TestLDAPConnectionSocketReads < Test::Unit::TestCase
     result2 = make_message(2, app_tag: Net::LDAP::PDU::ModifyResponse)
 
     mock = flexmock("socket")
-    mock.should_receive(:read_ber).
-      and_return(result1).
-      and_return(result2)
+    mock.should_receive(:read_ber)
+        .and_return(result1)
+        .and_return(result2)
     mock.should_receive(:ber_timeout_write)
     conn = Net::LDAP::Connection.new(:socket => mock)
 
@@ -229,9 +229,9 @@ class TestLDAPConnectionSocketReads < Test::Unit::TestCase
     result2 = make_message(2, app_tag: Net::LDAP::PDU::AddResponse)
 
     mock = flexmock("socket")
-    mock.should_receive(:read_ber).
-      and_return(result1).
-      and_return(result2)
+    mock.should_receive(:read_ber)
+        .and_return(result1)
+        .and_return(result2)
     mock.should_receive(:ber_timeout_write)
     conn = Net::LDAP::Connection.new(:socket => mock)
 
@@ -247,9 +247,9 @@ class TestLDAPConnectionSocketReads < Test::Unit::TestCase
     result2 = make_message(2, app_tag: Net::LDAP::PDU::ModifyRDNResponse)
 
     mock = flexmock("socket")
-    mock.should_receive(:read_ber).
-      and_return(result1).
-      and_return(result2)
+    mock.should_receive(:read_ber)
+        .and_return(result1)
+        .and_return(result2)
     mock.should_receive(:ber_timeout_write)
     conn = Net::LDAP::Connection.new(:socket => mock)
 
@@ -268,9 +268,9 @@ class TestLDAPConnectionSocketReads < Test::Unit::TestCase
     result2 = make_message(2, app_tag: Net::LDAP::PDU::DeleteResponse)
 
     mock = flexmock("socket")
-    mock.should_receive(:read_ber).
-      and_return(result1).
-      and_return(result2)
+    mock.should_receive(:read_ber)
+        .and_return(result1)
+        .and_return(result2)
     mock.should_receive(:ber_timeout_write)
     conn = Net::LDAP::Connection.new(:socket => mock)
 
@@ -286,13 +286,13 @@ class TestLDAPConnectionSocketReads < Test::Unit::TestCase
     result2 = make_message(2, app_tag: Net::LDAP::PDU::ExtendedResponse)
 
     mock = flexmock("socket")
-    mock.should_receive(:read_ber).
-      and_return(result1).
-      and_return(result2)
+    mock.should_receive(:read_ber)
+        .and_return(result1)
+        .and_return(result2)
     mock.should_receive(:ber_timeout_write)
     conn = Net::LDAP::Connection.new(:socket => mock)
-    flexmock(Net::LDAP::Connection).should_receive(:wrap_with_ssl).with(mock, {}, nil).
-      and_return(mock)
+    flexmock(Net::LDAP::Connection).should_receive(:wrap_with_ssl).with(mock, {}, nil)
+                                   .and_return(mock)
 
     conn.next_msgid # simulates ongoing query
 
@@ -306,9 +306,9 @@ class TestLDAPConnectionSocketReads < Test::Unit::TestCase
 
     mock = flexmock("socket")
     mock.extend(Net::BER::BERParser)
-    mock.should_receive(:read_ber).
-      and_return(result1).
-      and_return(result2)
+    mock.should_receive(:read_ber)
+        .and_return(result1)
+        .and_return(result2)
     mock.should_receive(:ber_timeout_write)
     conn = Net::LDAP::Connection.new(:socket => mock)
 
@@ -317,7 +317,8 @@ class TestLDAPConnectionSocketReads < Test::Unit::TestCase
     assert result = conn.bind(
       method: :simple,
       username: "uid=user1,ou=People,dc=rubyldap,dc=com",
-      password: "passworD1")
+      password: "passworD1",
+    )
     assert result.success?
     assert_equal 2, result.message_id
   end
@@ -328,9 +329,9 @@ class TestLDAPConnectionSocketReads < Test::Unit::TestCase
 
     mock = flexmock("socket")
     mock.extend(Net::BER::BERParser)
-    mock.should_receive(:read_ber).
-      and_return(result1).
-      and_return(result2)
+    mock.should_receive(:read_ber)
+        .and_return(result1)
+        .and_return(result2)
     mock.should_receive(:ber_timeout_write)
     conn = Net::LDAP::Connection.new(:socket => mock)
 
@@ -340,7 +341,8 @@ class TestLDAPConnectionSocketReads < Test::Unit::TestCase
       method: :sasl,
       mechanism: "fake",
       initial_credential: "passworD1",
-      challenge_response: flexmock("challenge proc"))
+      challenge_response: flexmock("challenge proc"),
+    )
     assert result.success?
     assert_equal 2, result.message_id
   end
@@ -486,8 +488,8 @@ class TestLDAPConnectionInstrumentation < Test::Unit::TestCase
     search_result_ber = Net::BER::BerIdentifiedArray.new([Net::LDAP::ResultCodeSuccess, "", ""])
     search_result_ber.ber_identifier = Net::LDAP::PDU::SearchResult
     search_result = [1, search_result_ber]
-    @tcp_socket.should_receive(:read_ber).and_return(search_data).
-                                          and_return(search_result)
+    @tcp_socket.should_receive(:read_ber).and_return(search_data)
+               .and_return(search_result)
 
     events = @service.subscribe "search.net_ldap_connection"
     unread = @service.subscribe "search_messages_unread.net_ldap_connection"

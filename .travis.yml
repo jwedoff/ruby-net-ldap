@@ -12,8 +12,8 @@ rvm:
   # optional
   - ruby-head
   - jruby-19mode
+  - jruby-9.2
   - jruby-head
-  - rbx-2
 
 addons:
   hosts:
@@ -49,8 +49,8 @@ matrix:
   allow_failures:
     - rvm: ruby-head
     - rvm: jruby-19mode
+    - rvm: jruby-9.2
     - rvm: jruby-head
-    - rvm: rbx-2
   fast_finish: true
 
 notifications:
