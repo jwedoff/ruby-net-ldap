@@ -4,7 +4,7 @@ class Net::LDAP::Connection #:nodoc:
   include Net::LDAP::Instrumentation
 
   # Seconds before failing for socket connect timeout
-  DefaultTimeout = 5
+  DefaultConnectTimeout = 5
 
   LdapVersion = 3
 
@@ -48,7 +48,7 @@ class Net::LDAP::Connection #:nodoc:
     hosts = server[:hosts]
     encryption = server[:encryption]
 
-    timeout = server[:connect_timeout] || DefaultTimeout
+    timeout = server[:connect_timeout] || DefaultConnectTimeout
     socket_opts = {
       connect_timeout: timeout,
     }
@@ -321,6 +321,17 @@ class Net::LDAP::Connection #:nodoc:
     ].to_ber_sequence
   end
 
+  # --
+  # return a timeout given the value for time (if provided)
+  # defaults to using io_timeout
+  def calculate_timeout(time)
+    if time > 0
+      time + 0.5 #give remote server half a second to respond before killing connection
+    else
+      @server[:io_timeout]
+    end
+  end
+
   #--
   # Alternate implementation, this yields each search entry to the caller as
   # it are received.
@@ -399,11 +410,7 @@ class Net::LDAP::Connection #:nodoc:
 
     message_id = next_msgid
 
-    timeout = if time > 0
-                time + 0.5 #give remote server half a second to respond before killing connection
-              else
-                @server[:io_timeout]
-              end
+    timeout = calculate_timeout(time)
 
     instrument "search.net_ldap_connection",
                message_id: message_id,
