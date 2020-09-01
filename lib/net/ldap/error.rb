@@ -5,7 +5,12 @@ class Net::LDAP
     end
   end
 
-  module Error; end
+  module Error
+    def self.exception(*args)
+      ErrorClass.exception(*args)
+    end
+  end
+
   class ErrorClass < StandardError;
     include Error
   end
