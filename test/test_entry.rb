@@ -39,6 +39,32 @@ class TestEntry < Test::Unit::TestCase
     assert_equal ['Jensen'], @entry['Sn']
     assert_equal ['Jensen'], @entry['SN']
   end
+
+  def test_to_h
+    @entry['sn'] = 'Jensen'
+    expected     = {
+      dn: ['cn=Barbara,o=corp'],
+      sn: ['Jensen'],
+    }
+    duplicate = @entry.to_h
+    assert_equal expected, duplicate
+
+    # check that changing the duplicate
+    # does not affect the internal state
+    duplicate.delete(:sn)
+    assert_not_equal duplicate, @entry.to_h
+  end
+
+  def test_equal_operator
+    entry_two = Net::LDAP::Entry.new 'cn=Barbara,o=corp'
+    assert_equal @entry, entry_two
+
+    @entry['sn'] = 'Jensen'
+    assert_not_equal @entry, entry_two
+
+    entry_two['sn'] = 'Jensen'
+    assert_equal @entry, entry_two
+  end
 end
 
 class TestEntryLDIF < Test::Unit::TestCase
