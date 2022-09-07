@@ -33,9 +33,10 @@ class Net::LDAP::Connection #:nodoc:
   def prepare_socket(server, timeout=nil)
     socket = server[:socket]
     encryption = server[:encryption]
+    hostname = server[:host]
 
     @conn = socket
-    setup_encryption(encryption, timeout) if encryption
+    setup_encryption(encryption, timeout, hostname) if encryption
   end
 
   # Internal: simple private method that can be replaced, if necessary, to allow this warning to be modified
@@ -80,7 +81,8 @@ class Net::LDAP::Connection #:nodoc:
 
   module GetbyteForSSLSocket
     def getbyte
-      getc.ord
+      c = getc
+      c && c.ord
     end
   end
 
@@ -91,7 +93,7 @@ class Net::LDAP::Connection #:nodoc:
     end
   end
 
-  def self.wrap_with_ssl(io, tls_options = {}, timeout=nil)
+  def self.wrap_with_ssl(io, tls_options = {}, timeout=nil, hostname=nil)
     raise Net::LDAP::NoOpenSSLError, "OpenSSL is unavailable" unless Net::LDAP::HasOpenSSL
 
     ctx = OpenSSL::SSL::SSLContext.new
@@ -101,6 +103,7 @@ class Net::LDAP::Connection #:nodoc:
     ctx.set_params(tls_options) unless tls_options.empty?
 
     conn = OpenSSL::SSL::SSLSocket.new(io, ctx)
+    conn.hostname = hostname
 
     begin
       if timeout
@@ -153,11 +156,11 @@ class Net::LDAP::Connection #:nodoc:
   # communications, as with simple_tls. Thanks for Kouhei Sutou for
   # generously contributing the :start_tls path.
   #++
-  def setup_encryption(args, timeout=nil)
+  def setup_encryption(args, timeout=nil, hostname=nil)
     args[:tls_options] ||= {}
     case args[:method]
     when :simple_tls
-      @conn = self.class.wrap_with_ssl(@conn, args[:tls_options], timeout)
+      @conn = self.class.wrap_with_ssl(@conn, args[:tls_options], timeout, hostname)
       # additional branches requiring server validation and peer certs, etc.
       # go here.
     when :start_tls
@@ -175,7 +178,7 @@ class Net::LDAP::Connection #:nodoc:
 
       raise Net::LDAP::StartTLSError,
             "start_tls failed: #{pdu.result_code}" unless pdu.result_code.zero?
-      @conn = self.class.wrap_with_ssl(@conn, args[:tls_options], timeout)
+      @conn = self.class.wrap_with_ssl(@conn, args[:tls_options], timeout, hostname)
     else
       raise Net::LDAP::EncMethodUnsupportedError, "unsupported encryption method #{args[:method]}"
     end
