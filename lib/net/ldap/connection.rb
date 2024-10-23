@@ -30,10 +30,9 @@ class Net::LDAP::Connection #:nodoc:
     @socket_class = socket_class
   end
 
-  def prepare_socket(server, timeout=nil)
+  def prepare_socket(server, timeout=nil, hostname='127.0.0.1')
     socket = server[:socket]
     encryption = server[:encryption]
-    hostname = server[:host]
 
     @conn = socket
     setup_encryption(encryption, timeout, hostname) if encryption
@@ -57,7 +56,7 @@ class Net::LDAP::Connection #:nodoc:
     errors = []
     hosts.each do |host, port|
       begin
-        prepare_socket(server.merge(socket: @socket_class.new(host, port, socket_opts)), timeout)
+        prepare_socket(server.merge(socket: @socket_class.new(host, port, socket_opts)), timeout, host)
         if encryption
           if encryption[:tls_options] &&
              encryption[:tls_options][:verify_mode] &&
@@ -453,6 +452,7 @@ class Net::LDAP::Connection #:nodoc:
           # this breaks when calling to_ber. (Can't force binary data to UTF-8)
           # we have to disable paging (even though server supports it) to get around this...
 
+        user_controls = args.fetch(:controls, [])
           controls = []
           controls <<
             [
@@ -462,7 +462,12 @@ class Net::LDAP::Connection #:nodoc:
               rfc2696_cookie.map(&:to_ber).to_ber_sequence.to_s.to_ber,
             ].to_ber_sequence if paged
           controls << ber_sort if ber_sort
-          controls = controls.empty? ? nil : controls.to_ber_contextspecific(0)
+        if controls.empty? && user_controls.empty?
+          controls = nil
+        else
+          controls += user_controls
+          controls = controls.to_ber_contextspecific(0)
+        end
 
           write(request, controls, message_id)
 

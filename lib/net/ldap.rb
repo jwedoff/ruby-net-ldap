@@ -480,6 +480,8 @@ class Net::LDAP
   #   server says it supports them. This is a fix for MS Active Directory
   # * :instrumentation_service => An object responsible for instrumenting
   #   operations, compatible with ActiveSupport::Notifications' public API.
+  # * :connect_timeout => The TCP socket timeout (in seconds) to use when
+  #   connecting to the LDAP server (default 5 seconds).
   # * :encryption => specifies the encryption to be used in communicating
   #   with the LDAP server. The value must be a Hash containing additional
   #   parameters, which consists of two keys:
@@ -1256,10 +1258,10 @@ class Net::LDAP
     rs = search(:ignore_server_caps => true, :base => "",
                 :scope => SearchScope_BaseObject,
                 :attributes => [:subschemaSubentry])
-    return Net::LDAP::Entry.new unless (rs and rs.first)
+    return Net::LDAP::Entry.new unless rs and rs.first
 
     subschema_name = rs.first.subschemasubentry
-    return Net::LDAP::Entry.new unless (subschema_name and subschema_name.first)
+    return Net::LDAP::Entry.new unless subschema_name and subschema_name.first
 
     rs = search(:ignore_server_caps => true, :base => subschema_name.first,
                 :scope => SearchScope_BaseObject,
