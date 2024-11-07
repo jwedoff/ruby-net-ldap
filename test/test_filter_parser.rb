@@ -26,4 +26,28 @@ class TestFilterParser < Test::Unit::TestCase
   def test_attr_tag
     assert_kind_of Net::LDAP::Filter, Net::LDAP::Filter::FilterParser.parse("(mail;primary=jane@example.org)")
   end
+  
+  def test_semicolon_value
+    assert_kind_of Net::LDAP::Filter, Net::LDAP::Filter::FilterParser.parse("(mail;primary=jane@example.org;bar)")
+  end
+
+  def test_gele_value
+    assert_kind_of Net::LDAP::Filter, Net::LDAP::Filter::FilterParser.parse("(mail;primary=jane@example.org<bar>)")
+  end
+
+  def test_question_value
+    assert_kind_of Net::LDAP::Filter, Net::LDAP::Filter::FilterParser.parse("(mail;primary=jane@example.org?bar)")
+  end
+
+  def test_backtick_value
+    assert_kind_of Net::LDAP::Filter, Net::LDAP::Filter::FilterParser.parse("(mail;primary=jane@example.org`bar)")
+  end
+
+  def test_pipe_value
+    assert_kind_of Net::LDAP::Filter, Net::LDAP::Filter::FilterParser.parse("(mail;primary=jane@example.org|bar)")
+  end
+
+  def test_dollar_value
+    assert_kind_of Net::LDAP::Filter, Net::LDAP::Filter::FilterParser.parse("(mail;primary=jane@example.org$bar)")
+  end
 end

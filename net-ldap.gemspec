@@ -28,10 +28,11 @@ the most recent LDAP RFCs (4510-4519, plutions of 4520-4532).}
   s.require_paths = ["lib"]
   s.required_ruby_version = ">= 2.0.0"
   s.summary = %q{Net::LDAP for Ruby (also called net-ldap) implements client access for the Lightweight Directory Access Protocol (LDAP), an IETF standard protocol for accessing distributed directory services}
-
+  s.metadata["allowed_push_host"] = "https://geminabox.gcds.akamai.com"
+  
   s.add_development_dependency("flexmock", "~> 1.3")
   s.add_development_dependency("rake", "~> 12.3.3")
   s.add_development_dependency("rubocop", "~> 1.48")
   s.add_development_dependency("test-unit", "~> 3.3")
-  s.add_development_dependency("byebug", "~> 9.0.6") unless RUBY_PLATFORM == "java"
+  s.add_development_dependency("byebug", "~> 11.1.3") unless RUBY_PLATFORM == "java"
 end
