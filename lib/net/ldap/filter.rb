@@ -323,7 +323,7 @@ class Net::LDAP::Filter
           end
         end
 
-        attribute = ''
+        attribute = String.new
         attribute << type if type
         attribute << ":#{dn}" if dn
         attribute << ":#{rule}" if rule

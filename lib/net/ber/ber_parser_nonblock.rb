@@ -65,7 +65,7 @@ module Net::BER::BERParserNonblock
 
   # Internal: Read `len` bytes, respecting timeout.
   def ber_timeout_read(len)
-    buffer ||= ''.force_encoding(Encoding::ASCII_8BIT)
+    buffer ||= String.new.force_encoding(Encoding::ASCII_8BIT)
     begin
       read_nonblock(len, buffer)
       return buffer if buffer.bytesize >= len
@@ -75,7 +75,7 @@ module Net::BER::BERParserNonblock
       # nothing to read on the socket (StringIO)
       nil
     end
-    block ||= ''.force_encoding(Encoding::ASCII_8BIT)
+    block ||= String.new.force_encoding(Encoding::ASCII_8BIT)
     len -= buffer.bytesize
     loop do
       begin

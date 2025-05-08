@@ -85,11 +85,11 @@ class TestBEREncoding < Test::Unit::TestCase
 
   if "Ruby 1.9".respond_to?(:encoding)
     def test_encode_utf8_strings
-      assert_equal "\x04\x02\xC3\xA5".b, "\u00e5".force_encoding("UTF-8").to_ber
+      assert_equal "\x04\x02\xC3\xA5".b, String.new("\u00e5").force_encoding("UTF-8").to_ber
     end
 
     def test_utf8_encodable_strings
-      assert_equal "\x04\nteststring", "teststring".encode("US-ASCII").to_ber
+      assert_equal "\x04\nteststring", String.new("teststring").encode("US-ASCII").to_ber
     end
 
     def test_encode_binary_data
@@ -128,7 +128,7 @@ class TestBERIdentifiedString < Test::Unit::TestCase
   end
 
   def test_ascii_data_in_utf8
-    data = "some text".force_encoding("UTF-8")
+    data = String.new("some text").force_encoding("UTF-8")
     bis = Net::BER::BerIdentifiedString.new(data)
 
     assert bis.valid_encoding?, "should be a valid encoding"
@@ -136,7 +136,7 @@ class TestBERIdentifiedString < Test::Unit::TestCase
   end
 
   def test_umlaut_data_in_utf8
-    data = "Müller".force_encoding("UTF-8")
+    data = String.new("Müller").force_encoding("UTF-8")
     bis = Net::BER::BerIdentifiedString.new(data)
 
     assert bis.valid_encoding?, "should be a valid encoding"
